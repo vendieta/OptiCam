@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
@@ -29,9 +30,10 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -42,12 +44,18 @@ class MainActivity : Activity() {
     // ---- interfaz ----
     private lateinit var texture: AutoFitTextureView
     private lateinit var statusView: TextView
-    private lateinit var btnShoot: Button
-    private lateinit var btnShare: Button
-    private lateinit var btnInfo: Button
-    private lateinit var btnCount: Button
-    private lateinit var btnRes: Button
-    private lateinit var btnNr: Button
+    private lateinit var btnShoot: FrameLayout
+    private lateinit var shutterInner: View
+    private lateinit var btnInfo: TextView
+    private lateinit var btnHistory: LinearLayout
+    private lateinit var historyCount: TextView
+    private lateinit var thumbView: ImageView
+    private lateinit var progress: ProgressBar
+    private lateinit var gallery: GalleryUi
+    private lateinit var chipMode: Chip
+    private lateinit var chipCount: Chip
+    private lateinit var chipRes: Chip
+    private lateinit var chipNr: Chip
 
     // ---- cámara ----
     private val bgThread = HandlerThread("camara-bg").also { it.start() }
@@ -74,6 +82,14 @@ class MainActivity : Activity() {
     private var resLevel = 1
     private var nrMinimal = true
     private var sizeOverride: Size? = null
+
+    // ---- modos de captura ----
+    private val modeNames = listOf("Normal", "HDR", "Noche")
+    private var mode = 0
+    private var expRange: android.util.Range<Long>? = null
+    private var isoRange: android.util.Range<Int>? = null
+    private var manualOk = false
+    private var framePlan: List<Pair<Int, Long>> = emptyList()
 
     // ---- estado de la ráfaga ----
     @Volatile private var busy = false
@@ -127,60 +143,111 @@ class MainActivity : Activity() {
     //  Interfaz (sin XML: se construye en código)
     // =====================================================================================
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = Ui.dp(this, v)
 
-    private fun styledButton(text: String): Button = Button(this).apply {
-        this.text = text
-        isAllCaps = false
-        setTextColor(Color.WHITE)
-        setBackgroundColor(Color.parseColor("#33FFFFFF"))
-        textSize = 13f
-        setPadding(dp(6), dp(6), dp(6), dp(6))
+    private class Chip(val root: LinearLayout, val label: TextView, val value: TextView)
+
+    private fun chip(): Chip {
+        val label = TextView(this).apply { textSize = 10f; setTextColor(Ui.MUTED); gravity = Gravity.CENTER; maxLines = 1 }
+        val value = TextView(this).apply { textSize = 13f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; maxLines = 1 }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(4), dp(8), dp(4), dp(8))
+            background = Ui.pressable(this@MainActivity, Ui.SURFACE, 14)
+            isClickable = true
+            addView(label)
+            addView(value)
+        }
+        return Chip(box, label, value)
     }
 
     private fun buildUi() {
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val root = FrameLayout(this).apply { setBackgroundColor(Ui.BG) }
 
         texture = AutoFitTextureView(this)
         root.addView(texture, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
+        // Barra superior flotante: estado + información de la cámara.
         statusView = TextView(this).apply {
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#99000000"))
-            textSize = 13f
+            background = Ui.shape(this@MainActivity, Ui.SCRIM, 16)
+            textSize = 12f
             setPadding(dp(12), dp(8), dp(12), dp(8))
             text = "Iniciando cámara…"
         }
-        root.addView(statusView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        btnInfo = TextView(this).apply {
+            text = "i"
+            textSize = 17f
+            typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD_ITALIC)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            background = Ui.pressableOval(this@MainActivity, Ui.SCRIM)
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.TOP; setPadding(dp(10), dp(10), dp(10), 0) }
+        top.addView(statusView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(8) })
+        top.addView(btnInfo, LinearLayout.LayoutParams(dp(40), dp(40)))
+        root.addView(top, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
+        // Panel inferior: progreso, opciones y fila del obturador.
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#CC000000"))
-            setPadding(dp(8), dp(8), dp(8), dp(10))
+            background = Ui.topRounded(this@MainActivity, Ui.PANEL, 24)
+            setPadding(dp(12), dp(14), dp(12), dp(14))
         }
-        val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        btnCount = styledButton("")
-        btnRes = styledButton("")
-        btnNr = styledButton("")
-        for (b in listOf(btnCount, btnRes, btnNr)) {
-            opts.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), dp(6)) })
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progressTintList = ColorStateList.valueOf(Ui.ACCENT)
+            progressBackgroundTintList = ColorStateList.valueOf(Ui.SURFACE2)
+            visibility = View.INVISIBLE
         }
-        panel.addView(opts)
+        panel.addView(progress, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)).apply { bottomMargin = dp(10) })
 
-        val main = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        btnInfo = styledButton("Info de\ncámara")
-        btnShare = styledButton("Compartir\núltimo")
-        btnShoot = Button(this).apply {
-            text = "●"
-            textSize = 30f
-            setTextColor(Color.parseColor("#E53935"))
-            setBackgroundColor(Color.WHITE)
+        val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        chipMode = chip(); chipCount = chip(); chipRes = chip(); chipNr = chip()
+        for (c in listOf(chipMode, chipCount, chipRes, chipNr)) {
+            opts.addView(c.root, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
-        main.addView(btnInfo, LinearLayout.LayoutParams(0, dp(56), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
-        main.addView(btnShoot, LinearLayout.LayoutParams(dp(84), dp(64)).apply { setMargins(dp(8), 0, dp(8), 0) })
-        main.addView(btnShare, LinearLayout.LayoutParams(0, dp(56), 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+        panel.addView(opts, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(14) })
+
+        // Vista previa de la última ráfaga (izquierda).
+        thumbView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = Ui.shape(this@MainActivity, Ui.SURFACE2, 14, Color.WHITE, 2)
+            clipToOutline = true
+            isClickable = true
+        }
+        // Obturador (centro).
+        shutterInner = View(this).apply { background = Ui.oval(this@MainActivity, Color.WHITE) }
+        val ring = View(this).apply { background = Ui.oval(this@MainActivity, Color.TRANSPARENT, Color.WHITE, 4) }
+        btnShoot = FrameLayout(this).apply {
+            isClickable = true
+            addView(ring, FrameLayout.LayoutParams(dp(78), dp(78), Gravity.CENTER))
+            addView(shutterInner, FrameLayout.LayoutParams(dp(62), dp(62), Gravity.CENTER))
+        }
+        // Historial (derecha).
+        historyCount = TextView(this).apply { textSize = 16f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); gravity = Gravity.CENTER; text = "▦" }
+        val historyLabel = TextView(this).apply { text = "Historial"; textSize = 10f; setTextColor(Ui.MUTED); gravity = Gravity.CENTER }
+        btnHistory = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = Ui.pressable(this@MainActivity, Ui.SURFACE, 14)
+            isClickable = true
+            addView(historyCount)
+            addView(historyLabel)
+        }
+        val main = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        main.addView(thumbView, LinearLayout.LayoutParams(dp(62), dp(62)))
+        main.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        main.addView(btnShoot, LinearLayout.LayoutParams(dp(80), dp(80)))
+        main.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        main.addView(btnHistory, LinearLayout.LayoutParams(dp(62), dp(62)))
         panel.addView(main)
         root.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+
+        // Historial y vista previa (superpuestos).
+        gallery = GalleryUi(this, { shareUri(it.uri) }, { refreshSummary() })
+        root.addView(gallery.root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         root.setOnApplyWindowInsetsListener { v, insets ->
             @Suppress("DEPRECATION")
@@ -189,13 +256,30 @@ class MainActivity : Activity() {
         }
         setContentView(root)
 
-        btnCount.setOnClickListener { countIdx = (countIdx + 1) % counts.size; refreshLabels(); restartPreview() }
-        btnRes.setOnClickListener { resLevel = (resLevel + 1) % 3; sizeOverride = null; refreshLabels(); restartPreview() }
-        btnNr.setOnClickListener { nrMinimal = !nrMinimal; refreshLabels() }
+        chipMode.root.setOnClickListener {
+            mode = (mode + 1) % modeNames.size
+            refreshLabels()
+            setStatus(when (mode) {
+                1 -> if (manualOk) "HDR: toma fotos con exposición corta, normal y larga para recuperar luces y sombras. Mantén el celular quieto."
+                     else "Este teléfono no permite exposición manual: HDR se hará como Normal."
+                2 -> if (manualOk) "Noche: exposición más larga y ISO más bajo (menos ruido). Apoya el celular o usa un trípode."
+                     else "Este teléfono no permite exposición manual: Noche se hará como Normal."
+                else -> "Normal: exposición automática bloqueada."
+            })
+        }
+        chipCount.root.setOnClickListener { countIdx = (countIdx + 1) % counts.size; refreshLabels(); restartPreview() }
+        chipRes.root.setOnClickListener { resLevel = (resLevel + 1) % 3; sizeOverride = null; refreshLabels(); restartPreview() }
+        chipNr.root.setOnClickListener { nrMinimal = !nrMinimal; refreshLabels() }
         btnShoot.setOnClickListener { shoot() }
         btnInfo.setOnClickListener { showInfo() }
-        btnShare.setOnClickListener { shareLast() }
+        btnHistory.setOnClickListener { gallery.showHistory() }
+        thumbView.setOnClickListener {
+            val last = gallery.lastItem
+            if (last == null) Toast.makeText(this, "Aún no hay ninguna ráfaga guardada", Toast.LENGTH_SHORT).show()
+            else gallery.showViewer(last, false)
+        }
         refreshLabels()
+        refreshSummary()
 
         texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
@@ -207,10 +291,22 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Miniatura de la última ráfaga y contador del historial. */
+    private fun refreshSummary() = gallery.loadSummary { _, n, bmp ->
+        thumbView.setImageBitmap(bmp)
+        historyCount.text = if (n > 0) "▦ $n" else "▦"
+    }
+
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+    override fun onBackPressed() {
+        if (!gallery.onBack()) super.onBackPressed()
+    }
+
     private fun refreshLabels() {
-        btnCount.text = "Fotos: $count"
-        btnRes.text = "Calidad: ${resNames[resLevel]}\n" + sizeLabel(chooseCaptureSize())
-        btnNr.text = "Ruido cámara:\n" + if (nrMinimal) "Apagado" else "Normal"
+        chipMode.label.text = "Modo"; chipMode.value.text = modeNames[mode]
+        chipCount.label.text = "Fotos"; chipCount.value.text = "$count"
+        chipRes.label.text = "Calidad"; chipRes.value.text = resNames[resLevel]
+        chipNr.label.text = "Ruido cám."; chipNr.value.text = if (nrMinimal) "Apagado" else "Normal"
     }
 
     private fun sizeLabel(s: Size) = "${s.width}×${s.height}"
@@ -218,7 +314,12 @@ class MainActivity : Activity() {
     private fun setStatus(msg: String) = runOnUiThread { statusView.text = msg }
 
     private fun setBusyUi(b: Boolean) = runOnUiThread {
-        for (v in listOf<View>(btnShoot, btnCount, btnRes, btnNr, btnInfo, btnShare)) v.isEnabled = !b
+        for (v in listOf<View>(chipCount.root, chipRes.root, chipNr.root, chipMode.root, btnInfo, btnHistory, thumbView)) v.isEnabled = !b
+        btnShoot.isEnabled = !b
+        btnShoot.alpha = if (b) 0.6f else 1f
+        shutterInner.background = Ui.oval(this, if (b) Ui.DANGER else Color.WHITE)
+        progress.progress = 0
+        progress.visibility = if (b) View.VISIBLE else View.INVISIBLE
     }
 
     // =====================================================================================
@@ -242,6 +343,10 @@ class MainActivity : Activity() {
         afSupported = chars.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)?.contains(CameraMetadata.CONTROL_AF_MODE_AUTO) == true
         noiseModes = chars.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?.toList() ?: emptyList()
         edgeModes = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.toList() ?: emptyList()
+        expRange = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+        isoRange = chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+        manualOk = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            ?.contains(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) == true && expRange != null && isoRange != null
         val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
         yuvSizes = (map.getOutputSizes(ImageFormat.YUV_420_888) ?: emptyArray()).sortedByDescending { it.width.toLong() * it.height }
     }
@@ -388,6 +493,35 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Plan de exposición de cada foto de la ráfaga: (ISO, tiempo en ns).
+     * Devuelve también si hay que usar exposición manual.
+     *  - Normal: la exposición automática ya calculada, bloqueada.
+     *  - HDR: tres exposiciones intercaladas (base, corta = -2 EV, larga = hasta 2x), mismo ISO.
+     *  - Noche: exposición más larga (hasta 3x) con ISO más bajo, para el mismo brillo con menos ruido.
+     */
+    private fun buildPlan(n: Int): Pair<List<Pair<Int, Long>>, Boolean> {
+        val t0 = lastExposureNs
+        val iso0 = lastIso
+        val er = expRange
+        val ir = isoRange
+        if (mode == 0 || !manualOk || er == null || ir == null) {
+            return List(n) { iso0 to t0 } to false
+        }
+        fun clampT(t: Long) = t.coerceIn(er.lower, er.upper)
+        fun clampI(i: Int) = i.coerceIn(ir.lower, ir.upper)
+        return if (mode == 1) {
+            val base = clampI(iso0) to clampT(t0)
+            val short = clampI(iso0) to clampT(t0 / 4)
+            val long = clampI(iso0) to clampT(minOf(t0 * 2, maxOf(t0, 100_000_000L)))
+            List(n) { i -> when (i % 3) { 0 -> base; 1 -> short; else -> long } } to true
+        } else {
+            val t = clampT(minOf(t0 * 3, 150_000_000L))
+            val iso = clampI((iso0.toLong() * t0 / maxOf(t, 1L)).toInt())
+            List(n) { iso to t } to true
+        }
+    }
+
     @Synchronized
     private fun fire() {
         if (fired) return
@@ -407,10 +541,12 @@ class MainActivity : Activity() {
         tFirst = 0L
         tLast = 0L
         rd.setOnImageAvailableListener({ r -> onImage(r, n) }, handler)
+        val (plan, manual) = buildPlan(n)
+        framePlan = plan
         try {
             val req = dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
             req.addTarget(rd.surface)
-            req.set(CaptureRequest.CONTROL_AE_LOCK, true)
+            if (!manual) req.set(CaptureRequest.CONTROL_AE_LOCK, true)
             req.set(CaptureRequest.CONTROL_AWB_LOCK, true)
             if (afSupported) req.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_AUTO)
             // "Apagado": el filtro del teléfono borra detalle antes de que el motor lo vea.
@@ -425,9 +561,18 @@ class MainActivity : Activity() {
             if (nrMode != null) req.set(CaptureRequest.NOISE_REDUCTION_MODE, nrMode)
             // Sin realce de bordes del teléfono (el motor aplica su propia nitidez controlada).
             if (nrMinimal && edgeModes.contains(CameraMetadata.EDGE_MODE_OFF)) req.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_OFF)
-            setStatus("Capturando $n fotos… no muevas el celular")
+            setStatus("Capturando $n fotos (${modeNames[if (manual) mode else 0]})… no muevas el celular")
             s.stopRepeating()
-            s.captureBurst(List(n) { req.build() }, null, handler)
+            val requests = List(n) { i ->
+                if (manual) {
+                    req.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                    req.set(CaptureRequest.SENSOR_SENSITIVITY, plan[i].first)
+                    req.set(CaptureRequest.SENSOR_EXPOSURE_TIME, plan[i].second)
+                    req.set(CaptureRequest.SENSOR_FRAME_DURATION, maxOf(plan[i].second, 33_333_333L))
+                }
+                req.build()
+            }
+            s.captureBurst(requests, null, handler)
             // Vigilante: si no llegan todas las fotos, se descarta.
             handler.postDelayed({ if (busy && writer === w) failBurst("Tiempo agotado: llegaron $framesWritten de $n fotos") }, 20_000)
         } catch (e: Exception) {
@@ -439,7 +584,9 @@ class MainActivity : Activity() {
         val w = writer ?: return
         val img = r.acquireNextImage() ?: return
         try {
-            w.writeFrame(img, lastIso, lastExposureNs)
+            // ISO y exposición REALES de esta foto (en HDR cambian de una a otra).
+            val meta = framePlan.getOrNull(framesWritten)
+            w.writeFrame(img, meta?.first ?: lastIso, meta?.second ?: lastExposureNs)
         } catch (e: Exception) {
             img.close()
             return failBurst("Error guardando: ${e.message}")
@@ -450,6 +597,8 @@ class MainActivity : Activity() {
         tLast = now
         framesWritten++
         setStatus("Guardando foto $framesWritten de $n…")
+        val pct = framesWritten * 100 / n
+        runOnUiThread { progress.progress = pct }
         if (framesWritten >= n) finishBurst(w, n)
     }
 
@@ -463,11 +612,14 @@ class MainActivity : Activity() {
         }
         val secs = (tLast - tFirst) / 1e9
         val fps = if (n > 1 && secs > 0) (n - 1) / secs else 0.0
-        lastReport = "Ráfaga: $n fotos de ${sizeLabel(captureSize)} en %.2f s (%.1f fotos/s). ISO %d, exposición %.1f ms.".format(secs, fps, lastIso, lastExposureNs / 1e6)
+        lastReport = "Ráfaga: $n fotos de ${sizeLabel(captureSize)} en %.2f s (%.1f fotos/s). ISO %d, exposición %.1f ms. Modo %s: exposiciones [%s] ms.".format(
+            secs, fps, lastIso, lastExposureNs / 1e6, modeNames[mode],
+            framePlan.map { it.second / 1_000_000.0 }.distinct().joinToString(", ") { "%.1f".format(it) })
         resumePreview()
         busy = false
         setBusyUi(false)
-        setStatus("Guardado en Descargas/Camara/${w.displayName}\n$lastReport\nToca «Compartir último» para enviarlo a la PC.")
+        setStatus("Guardado ✓ ${w.displayName}\n$lastReport\nToca la miniatura para verla o ábrela en Historial.")
+        runOnUiThread { refreshSummary() }
     }
 
     private fun failBurst(msg: String) {
@@ -526,24 +678,7 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Último .camb de Descargas/Camara (también funciona tras reiniciar la app). */
-    private fun findLatest(): Uri? {
-        lastUri?.let { return it }
-        val proj = arrayOf(MediaStore.Downloads._ID)
-        val sel = "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DISPLAY_NAME} LIKE ?"
-        val args = arrayOf("%Download/Camara%", "%.camb%")
-        contentResolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, proj, sel, args, "${MediaStore.Downloads.DATE_ADDED} DESC")?.use { c ->
-            if (c.moveToFirst()) return android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, c.getLong(0))
-        }
-        return null
-    }
-
-    private fun shareLast() {
-        val uri = findLatest()
-        if (uri == null) {
-            Toast.makeText(this, "Aún no hay ninguna ráfaga guardada", Toast.LENGTH_SHORT).show()
-            return
-        }
+    private fun shareUri(uri: Uri) {
         val i = Intent(Intent.ACTION_SEND).apply {
             type = "application/octet-stream"
             putExtra(Intent.EXTRA_STREAM, uri)

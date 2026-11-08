@@ -66,7 +66,18 @@ fn handle(mut stream: TcpStream, store: Arc<Mutex<Store>>, counter: Arc<AtomicU6
         }
     }
 
-    match (method.as_str(), path.as_str()) {
+    // Separar la ruta de los parámetros (?detail=0|1|2).
+    let (route, query) = match path.split_once('?') {
+        Some((r, q)) => (r.to_string(), q.to_string()),
+        None => (path.clone(), String::new()),
+    };
+    let detail: u8 = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("detail="))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+
+    match (method.as_str(), route.as_str()) {
         ("GET", "/") => respond(&mut stream, "200 OK", "text/html; charset=utf-8", PAGE.as_bytes()),
         ("POST", "/process") => {
             if content_length == 0 || content_length > MAX_BODY {
@@ -90,7 +101,7 @@ fn handle(mut stream: TcpStream, store: Arc<Mutex<Store>>, counter: Arc<AtomicU6
             let n = frames.len();
             let (w0, h0) = (frames[0].width, frames[0].height);
             let t0 = Instant::now();
-            let out = process(&frames, &Options::default());
+            let out = process(&frames, &Options::with_detail(detail));
             let secs = t0.elapsed().as_secs_f32();
             let Some(rgb) = out.rgb.as_ref() else {
                 respond(&mut stream, "400 Bad Request", "application/json", br#"{"error":"el paquete no trae color (v1)"}"#);
@@ -113,8 +124,8 @@ fn handle(mut stream: TcpStream, store: Arc<Mutex<Store>>, counter: Arc<AtomicU6
                 }
             }
             let json = format!(
-                r#"{{"id":"{id}","frames":{n},"width":{},"height":{},"seconds":{:.2},"reference":{},"noise_a":{:.3},"noise_b":{:.3},"src_w":{w0},"src_h":{h0}}}"#,
-                rgb.width, rgb.height, secs, out.reference_index, out.noise.a, out.noise.b
+                r#"{{"id":"{id}","frames":{n},"width":{},"height":{},"seconds":{:.2},"reference":{},"noise_a":{:.3},"noise_b":{:.3},"src_w":{w0},"src_h":{h0},"hdr":{}}}"#,
+                rgb.width, rgb.height, secs, out.reference_index, out.noise.a, out.noise.b, out.hdr
             );
             respond(&mut stream, "200 OK", "application/json", json.as_bytes());
         }

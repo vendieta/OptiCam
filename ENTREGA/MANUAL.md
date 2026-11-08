@@ -31,6 +31,14 @@ alcanza. Toca *Compartir informe* para enviarlo.
 
 1. Apunta y mantén el celular **lo más quieto que puedas** (apóyalo en algo si hay poca luz).
 2. Opciones de abajo (tócalas para cambiarlas):
+   - **Modo:**
+     - *Normal*: exposición automática bloqueada (lo de siempre).
+     - *HDR*: la ráfaga mezcla tres exposiciones (normal, corta y larga). El motor las une para recuperar
+       los detalles de las **luces** (una ventana, una pantalla encendida) y de las **sombras** a la vez.
+       Úsalo en escenas con mucho contraste. Mantén el celular muy quieto: las fotos largas se
+       emborronan con el temblor.
+     - *Noche*: exposición más larga con ISO más bajo (mismo brillo, menos ruido). **Apoya el celular**
+       o usa un trípode.
    - **Fotos:** 4, 6, 8, 10, 12 o 16. Más fotos = menos ruido (baja con la raíz del número de fotos),
      pero el archivo pesa más. Para escenas con poca luz usa 12 o 16.
    - **Calidad:** Baja (~2 MP), Media (~5 MP), Alta (máximo del sensor).
@@ -55,6 +63,19 @@ alcanza. Toca *Compartir informe* para enviarlo.
 3. Espera unos segundos. Verás la **foto única** frente a la **fusionada** con un deslizador y podrás
    descargar ambas en PNG.
 
+**Control «Detalle» (arriba del recuadro):** elige entre suavidad y textura fina.
+- *Suave*: máxima limpieza de ruido, aspecto más liso (puede borrar texturas finas).
+- *Equilibrado* (recomendado): buena limpieza conservando la textura.
+- *Máximo detalle*: conserva la textura fina (tela, piel, follaje, plástico mate) a costa de algo más de grano.
+
+Si ves que se pierden detalles finos, usa *Máximo detalle*.
+
+**Qué se puede y qué no se puede recuperar.** El motor deshace el emborronado del lente y conserva la
+textura real, pero **no inventa detalle**. Si el procesador de imagen del teléfono ya alisó una zona
+(por ejemplo, flores pequeñas o follaje, que salen como manchas "pintadas" incluso en la foto única),
+esa información ya no existe en los datos. Un programa de IA generativa puede "rellenarla" y parecer más
+nítido, pero inventa estructura y puede alterar textos y objetos reales. Por línea de comandos: `--detail 0`, `--detail 1` o `--detail 2`.
+
 Por línea de comandos también se puede:
 
 ```
@@ -68,9 +89,16 @@ Opciones del revelado (todas opcionales):
 | `--strength` | HDR local: sube las sombras (0 a 1) | 0.70 |
 | `--sat` | Saturación del color (1.0 = neutro) | 1.25 |
 | `--sharpen` | Nitidez (0 = ninguna) | 0.40 |
+| `--clarity` | Claridad: contraste local de medios tonos (0 a 0.5) | 0.30 |
 | `--denoise` | Limpieza de ruido multi-escala (0 = ninguna, 3 = fuerte) | 2.0 |
-| `--nlm` | Limpieza previa por promedios no locales (0 = ninguna) | 1.0 |
+| `--nlm` | Limpieza previa por promedios no locales (0 = ninguna). Valores altos borran textura fina | 0.3 |
+| `--sharpw` | Peso por nitidez en la fusión: una foto más borrosa que la referencia pesa menos (0 = apagado) | 3 |
+| `--detail` | Preajuste 0 (Suave), 1 (Equilibrado) o 2 (Máximo detalle) | 1 |
+| `--deconv` | Deconvolución: deshace el emborronado óptico del lente y del sensor, midiéndolo en los bordes de cada foto (0 = apagada, 1 = completa) | 0.7 |
+| `--dsigma` | Emborronado a deshacer en píxeles (0 = medirlo automáticamente). **No lo subas de más:** sobrestimarlo empeora la foto | 0 (auto) |
 | `--no-wb` | Desactiva el balance de blancos automático | activo |
+| `--wiener 1` | **Experimental:** fusión por frecuencias (estilo HDR+) en vez de la fusión por píxel. En mis pruebas con tus ráfagas dio **más ruido y bordes algo peores** que la fusión por defecto, así que no se recomienda | desactivado |
+| `--c` | Tolerancia al ruido de la fusión Wiener (solo con `--wiener 1`) | 8 |
 | `--raw` | Desactiva todo el revelado y deja solo la fusión | — |
 
 El balance de blancos busca zonas claras y casi neutras (blancos, grises luminosos) y quita el tinte de la

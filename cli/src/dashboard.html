@@ -52,6 +52,14 @@
 </header>
 <main>
   <section class="card">
+    <div class="row" style="margin-bottom:12px">
+      <label for="detail"><b>Detalle:</b></label>
+      <select id="detail" style="font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink)">
+        <option value="0">Suave: más limpio, aspecto liso</option>
+        <option value="1" selected>Equilibrado (recomendado)</option>
+        <option value="2">Máximo detalle: conserva la textura fina, algo más de grano</option>
+      </select>
+    </div>
     <div id="drop" tabindex="0">
       <strong>Suelta aquí el archivo .camb</strong>
       <span>o haz clic para elegirlo</span>
@@ -103,7 +111,7 @@ async function run(f) {
   }, 250);
   status.innerHTML = '<span class="spin"></span>Subiendo ' + f.name + '…';
   try {
-    const r = await fetch('/process', { method: 'POST', body: f });
+    const r = await fetch('/process?detail=' + $('detail').value, { method: 'POST', body: f });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'error');
     show(j);
@@ -122,7 +130,7 @@ function show(j) {
   $('imgBase').src = m; $('imgTop').src = s;
   $('dl').href = m; $('dl2').href = s;
   $('stats').innerHTML =
-    '<span><b>' + j.frames + '</b> fotos</span>' +
+    '<span><b>' + j.frames + '</b> fotos' + (j.hdr ? ' · <b>HDR</b> (exposiciones múltiples)' : '') + '</span>' +
     '<span><b>' + j.width + '×' + j.height + '</b> px</span>' +
     '<span>procesado en <b>' + j.seconds + ' s</b></span>' +
     '<span>referencia: foto <b>' + (j.reference + 1) + '</b></span>' +

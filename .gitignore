@@ -1,0 +1,14 @@
+# Compilados
+/target/
+**/build/
+.gradle/
+.idea/
+*.iml
+local.properties
+
+# Resultados y datos de prueba: contienen fotos personales, NO subir
+/out/
+*.camb
+
+# Python
+__pycache__/

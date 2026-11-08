@@ -12,6 +12,15 @@ pub struct DevelopParams {
     pub saturation: f32,
     /// Cantidad de nitidez (0 = ninguna).
     pub sharpen: f32,
+    /// Deconvolución (Richardson–Lucy) para deshacer el emborronado óptico: 0 = apagada, 1 = completa.
+    pub deconv: f32,
+    /// Desviación (px) del emborronado que se deshace (0 = medirla automáticamente en los bordes).
+    pub deconv_sigma: f32,
+    /// Factor prudente sobre la σ medida automáticamente.
+    pub deconv_safety: f32,
+    /// Claridad: contraste local de medios tonos (0 = ninguno, 0.5 = marcado). Solo realza
+    /// estructura que supera el ruido.
+    pub clarity: f32,
     /// Limpieza de ruido multi-escala (wavelets): 0 = ninguna, 3 = fuerte.
     pub denoise: f32,
     /// Limpieza previa por promedios no locales (0 = ninguna).
@@ -23,12 +32,12 @@ pub struct DevelopParams {
 
 impl Default for DevelopParams {
     fn default() -> Self {
-        Self { strength: 0.70, saturation: 1.25, sharpen: 0.4, denoise: 2.0, nlm: 1.0, auto_wb: true, enabled: true }
+        Self { strength: 0.70, saturation: 1.25, sharpen: 0.4, deconv: 0.7, deconv_sigma: 0.0, deconv_safety: 0.85, clarity: 0.30, denoise: 2.0, nlm: 0.3, auto_wb: true, enabled: true }
     }
 }
 
 /// Promedio con ventana cuadrada (bordes con ventana reducida).
-fn box_blur(p: &Plane, r: usize) -> Plane {
+pub(crate) fn box_blur(p: &Plane, r: usize) -> Plane {
     let (w, h) = (p.w, p.h);
     let mut tmp = Plane::new(w, h);
     for y in 0..h {
@@ -58,7 +67,7 @@ fn box_blur(p: &Plane, r: usize) -> Plane {
 }
 
 /// Desenfoque gaussiano 5x5 separable a resolución completa.
-fn blur5(p: &Plane) -> Plane {
+pub(crate) fn blur5(p: &Plane) -> Plane {
     const K: [f32; 5] = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
     let mut tmp = Plane::new(p.w, p.h);
     par_rows(&mut tmp.data, p.w, |y, row| {
@@ -93,7 +102,8 @@ pub fn tone_map(y: &Plane, white: f32, p: &DevelopParams, sigma: f32) -> Plane {
     let mut logl = Plane::new(w, h);
     par_rows(&mut logl.data, w, |yy, row| {
         for (x, o) in row.iter_mut().enumerate() {
-            let l = (y.data[yy * w + x] / white).clamp(0.0, 1.0);
+            // En HDR la luminancia puede superar el blanco de la referencia (hasta ~6x).
+            let l = (y.data[yy * w + x] / white).clamp(0.0, 6.0);
             *o = (l + OFF).ln();
         }
     });
@@ -123,7 +133,11 @@ pub fn tone_map(y: &Plane, white: f32, p: &DevelopParams, sigma: f32) -> Plane {
     let s = p.strength.clamp(0.0, 1.0);
     // Solo se levantan las sombras; las luces NO se comprimen (el blanco debe seguir blanco).
     let comp = 1.0 - 0.55 * s;
-    let boost = 1.0 + 0.30 * s;
+    let boost = 1.0 + p.clarity.max(0.0);
+    let top = (1.0 + OFF).ln();
+    // Luces por encima del blanco: compresión fuerte en escala logarítmica para que un rango de
+    // hasta ~6x quepa en pantalla sin perder la textura (solo actúa si hay contenido HDR).
+    let hi_comp = 1.0 - 0.70 * s;
 
     let mut out = Plane::new(w, h);
     par_rows(&mut out.data, w, |yy, row| {
@@ -136,7 +150,16 @@ pub fn tone_map(y: &Plane, white: f32, p: &DevelopParams, sigma: f32) -> Plane {
             // El realce de detalle solo actúa sobre lo que supera el ruido: d(ln L) = σ / L.
             let noise_log = sigma_l * (-i).exp();
             let core = detail.signum() * (detail.abs() - 2.5 * noise_log).max(0.0);
-            let base_t = if base < mid { mid + (base - mid) * comp } else { base };
+            // Sombras: se levantan. Luces dentro del rango normal: intactas (el blanco sigue blanco).
+            // Luces por ENCIMA del blanco de la referencia (solo existen en HDR): se comprimen
+            // para que quepan en pantalla conservando su detalle.
+            let base_t = if base < mid {
+                mid + (base - mid) * comp
+            } else if base > top {
+                top + (base - top) * hi_comp
+            } else {
+                base
+            };
             let ol = base_t + detail + (boost - 1.0) * core;
             *o = ol.exp() - OFF;
         }
@@ -163,9 +186,10 @@ pub fn tone_map(y: &Plane, white: f32, p: &DevelopParams, sigma: f32) -> Plane {
                 let ss = x * x * (3.0 - 2.0 * x);
                 x += (ss - x) * 0.40 * s;
             }
-            // Hombro suave para las luces.
+            // Hombro suave para las luces: asíntota en 1.0 pero con pendiente, así las luces
+            // recuperadas por el HDR conservan gradación en vez de quedar planas.
             if x > 0.80 {
-                x = 0.80 + 0.20 * ((x - 0.80) / 0.20).tanh();
+                x = 0.80 + 0.20 * (1.0 - (-(x - 0.80) / 0.60).exp());
             }
             *v = x * white;
         }
