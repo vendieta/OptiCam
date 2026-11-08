@@ -1,0 +1,10 @@
+[package]
+name = "camara-core"
+version = "0.1.0"
+edition = "2021"
+
+# Sin dependencias externas: todo el motor es propio.
+[dependencies]
+
+[lib]
+name = "camara_core"

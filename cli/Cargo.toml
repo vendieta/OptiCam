@@ -1,0 +1,11 @@
+[package]
+name = "camara-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "camara"
+path = "src/main.rs"
+
+[dependencies]
+camara-core = { path = "../core" }

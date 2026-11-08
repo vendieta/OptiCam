@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cámara · Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #15181e; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2563eb; --accent-ink: #ffffff; --ok: #0f9d58; --bad: #d93025;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --card: #181c22; --ink: #eceff4; --muted: #98a1b0; --line: #2a303a; --accent: #5b8cff; --accent-ink: #0b1020; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; }
+  header { padding: 20px 24px 8px; max-width: 1100px; margin: 0 auto; }
+  h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 1100px; margin: 0 auto; padding: 8px 24px 48px; display: grid; gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  #drop { border: 2px dashed var(--line); border-radius: 12px; padding: 36px 16px; text-align: center; cursor: pointer; transition: .15s; }
+  #drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #drop span { color: var(--muted); }
+  button, .btn { font: inherit; background: var(--accent); color: var(--accent-ink); border: 0; padding: 9px 16px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.sec { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  #status { color: var(--muted); min-height: 24px; }
+  #status.err { color: var(--bad); }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: r .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  #result { display: none; }
+  .cmp { position: relative; overflow: hidden; border-radius: 10px; background: #000; user-select: none; touch-action: none; }
+  .cmp img { display: block; width: 100%; height: auto; }
+  .cmp .top { position: absolute; inset: 0; clip-path: inset(0 50% 0 0); }
+  .cmp .top img { height: 100%; object-fit: cover; }
+  .cmp .bar { position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; background: #fff; box-shadow: 0 0 4px #0008; cursor: ew-resize; }
+  .cmp .bar::after { content: "⇆"; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #fff; color: #111; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 17px; }
+  .tag { position: absolute; top: 10px; padding: 3px 9px; border-radius: 6px; background: #000a; color: #fff; font-size: 12px; }
+  .tag.l { left: 10px; } .tag.r { right: 10px; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); margin: 12px 0; }
+  .stats b { color: var(--ink); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  ol { margin: 6px 0 0 18px; padding: 0; color: var(--muted); }
+  code { background: color-mix(in srgb, var(--muted) 18%, transparent); padding: 1px 6px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Cámara · Dashboard</h1>
+  <p>Arrastra aquí el paquete <code>.camb</code> que guardó la app y el motor lo procesa en esta PC.</p>
+</header>
+<main>
+  <section class="card">
+    <div id="drop" tabindex="0">
+      <strong>Suelta aquí el archivo .camb</strong>
+      <span>o haz clic para elegirlo</span>
+      <input id="file" type="file" accept=".camb" hidden>
+    </div>
+    <div id="status"></div>
+  </section>
+
+  <section class="card" id="result">
+    <div class="cmp" id="cmp">
+      <img id="imgBase" alt="Foto fusionada">
+      <div class="top"><img id="imgTop" alt="Foto única"></div>
+      <div class="bar" id="bar"></div>
+      <span class="tag l">Foto única</span><span class="tag r">Fusionada</span>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="row">
+      <a class="btn" id="dl" download="foto_fusionada.png">Descargar foto fusionada</a>
+      <a class="btn sec" id="dl2" download="foto_unica.png">Descargar foto única</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <strong>Cómo se usa</strong>
+    <ol>
+      <li>En el celular, abre la app y toca el botón del obturador (mantén el celular quieto 1–2 segundos).</li>
+      <li>Toca <b>Compartir</b> y envía el paquete por Bluetooth, cable USB, Nearby Share, WhatsApp, etc.</li>
+      <li>Suelta el archivo <code>.camb</code> en este recuadro y espera el resultado.</li>
+    </ol>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const drop = $('drop'), file = $('file'), status = $('status');
+
+drop.onclick = () => file.click();
+drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') file.click(); };
+file.onchange = () => file.files[0] && run(file.files[0]);
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) run(f); });
+
+async function run(f) {
+  $('result').style.display = 'none';
+  status.className = '';
+  const t0 = performance.now();
+  const tick = setInterval(() => {
+    status.innerHTML = '<span class="spin"></span>Procesando ' + f.name + '… ' + ((performance.now() - t0) / 1000).toFixed(0) + ' s';
+  }, 250);
+  status.innerHTML = '<span class="spin"></span>Subiendo ' + f.name + '…';
+  try {
+    const r = await fetch('/process', { method: 'POST', body: f });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'error');
+    show(j);
+    status.textContent = 'Listo.';
+  } catch (e) {
+    status.className = 'err';
+    status.textContent = 'No se pudo procesar: ' + e.message;
+  } finally {
+    clearInterval(tick);
+    file.value = '';
+  }
+}
+
+function show(j) {
+  const m = '/img/' + j.id + '/merged.png', s = '/img/' + j.id + '/single.png';
+  $('imgBase').src = m; $('imgTop').src = s;
+  $('dl').href = m; $('dl2').href = s;
+  $('stats').innerHTML =
+    '<span><b>' + j.frames + '</b> fotos</span>' +
+    '<span><b>' + j.width + '×' + j.height + '</b> px</span>' +
+    '<span>procesado en <b>' + j.seconds + ' s</b></span>' +
+    '<span>referencia: foto <b>' + (j.reference + 1) + '</b></span>' +
+    '<span>ruido estimado: <b>' + j.noise_a + '·v + ' + j.noise_b + '</b></span>';
+  $('result').style.display = 'block';
+  setPos(50);
+}
+
+const cmp = $('cmp');
+function setPos(p) {
+  p = Math.max(0, Math.min(100, p));
+  cmp.querySelector('.top').style.clipPath = 'inset(0 ' + (100 - p) + '% 0 0)';
+  $('bar').style.left = p + '%';
+}
+let drag = false;
+const move = e => { if (!drag) return; const b = cmp.getBoundingClientRect(); setPos((e.clientX - b.left) / b.width * 100); };
+cmp.addEventListener('pointerdown', e => { drag = true; cmp.setPointerCapture(e.pointerId); move(e); });
+cmp.addEventListener('pointermove', move);
+cmp.addEventListener('pointerup', () => drag = false);
+</script>
+</body>
+</html>

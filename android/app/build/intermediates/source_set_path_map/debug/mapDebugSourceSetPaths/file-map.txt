@@ -1,0 +1,8 @@
+com.camara.app-pngs-0 D:\PROYECTOS\CAMARA\android\app\build\generated\res\pngs\debug
+com.camara.app-resValues-1 D:\PROYECTOS\CAMARA\android\app\build\generated\res\resValues\debug
+com.camara.app-updated_navigation_xml-2 D:\PROYECTOS\CAMARA\android\app\build\generated\updated_navigation_xml\debug
+com.camara.app-packageDebugResources-3 D:\PROYECTOS\CAMARA\android\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.camara.app-packageDebugResources-4 D:\PROYECTOS\CAMARA\android\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.camara.app-debug-5 D:\PROYECTOS\CAMARA\android\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.camara.app-debug-6 D:\PROYECTOS\CAMARA\android\app\src\debug\res
+com.camara.app-main-7 D:\PROYECTOS\CAMARA\android\app\src\main\res
